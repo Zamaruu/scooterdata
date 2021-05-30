@@ -4,6 +4,7 @@ import pandas
 from pymongo import MongoClient
 from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
+import geopy.distance
 
 database = 'scooterdaten'
 connection_string = 'mongodb://localhost:27017/?readPreference=primary&appname=MongoDB%20Compass&ssl=false'
@@ -66,17 +67,86 @@ def loadDataFromDB():
         'lastStateChange': 1
     })
 
-    # die ersten 10 ergebnisse ausgeben
+    avgpipe = [
+        {"$match":
+            {"id": "ddbb29fd-bf4f-4cb5-b7a1-1a35489a1832"}
+        },
+        {"$group": {
+                "_id": "$id",
+                "batavg": {"$avg": "$batteryLevel"}
+            },
+        },
+    ]
 
-    df = pandas.DataFrame(list(x[:25]))
-    df.plot(kind="bar", x="lastStateChange", y="batteryLevel")
-    plt.show()
+    avgres = collection.aggregate(pipeline=avgpipe)
+
+    for each in avgres:
+        print("Avarage batteryLevel of Scooter '"+each['_id']+"' is: " + "%.2f" % each['batavg'] + "%")
+
+    latlngpipe = [
+        {"$match":
+             {"id": "ddbb29fd-bf4f-4cb5-b7a1-1a35489a1832"}
+         },
+        {"$group": {
+            "_id": "$id",
+            "lastLocationUpdate": "$lastLocationUpdate",
+            "lat": "$lat",
+            "lng": "$lng",
+            },
+        },
+    ]
+    query = {
+        'id': id,
+        "lastLocationUpdate": 1,
+        "lat": 1,
+        "lng": 1,
+    }
+    clear = lambda: os.system('cls')
+    posres = collection.find({}, query)
+    print("posres: " + str(type(posres)))
+    print(posres)
+    distances = []
+    positions = []
+    cnt = 0
+    #posres = collection.aggregate(pipeline=latlngpipe)
+    for point in posres:
+        cnt += 1
+        print("loading coordinates #" + str(cnt))
+        #print("Point '" + str(point['lat']) + ", " + str(point['lng']) + " on " + point['lastLocationUpdate'])
+        positions.append(
+            {
+                'lat': point['lat'],
+                'lng': point['lng'],
+                'lastLocationUpdate': point['lastLocationUpdate'],
+            }
+        )
+        #coords_1 = (point['lat'], point['lng'])
+        #coords_2 = (point[i + 1]['lat'], point[i + 1]['lng'])
+        #distances.append(geopy.distance.vincenty(coords_1, coords_2).km)
+        #i = i + 1
+        #try:
+
+        #except:
+        #    print("EOL")
+    print("finsished collecting data\nProccessing Data now!")
+    i = 0
+    for point in positions:
+        coords_1 = (point['lat'], point['lng'])
+        coords_2 = (positions[i + 1]['lat'], positions[i + 1]['lng'])
+        distances.append(geopy.distance.distance(coords_1, coords_2).km)
+    avgdist = sum(distances) / len(distances)
+    print("Avarage distancetravel with scooter " + id + ": "+ str(int(avgdist)) + "km")
+
+    # die ersten 10 ergebnisse ausgeben
+    #df = pandas.DataFrame(list(x[:25]))
+    #df.plot(kind="bar", x="lastStateChange", y="batteryLevel")
+    #plt.show()
+
 
     avarageBatteryLevel = 0
-    for data in x:
-        avarageBatteryLevel += int(x['batteryLevel'])
+    #for data in x:
+    #    avarageBatteryLevel += int(x['batteryLevel'])
 
-    print(type(x))
 
     #avarageBatteryLevel = avarageBatteryLevel / list(x).
     #print('Durchschnittliche Batterieladung des Scooters: ' + str(avarageBatteryLevel) + '%')
