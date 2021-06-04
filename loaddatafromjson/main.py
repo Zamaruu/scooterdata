@@ -1,10 +1,11 @@
 import json
 import os
-import pandas
+import pandas as pd
 from pymongo import MongoClient
 from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
 import geopy.distance
+from datetime import datetime
 
 database = 'scooterdaten'
 connection_string = 'mongodb://localhost:27017/?readPreference=primary&appname=MongoDB%20Compass&ssl=false'
@@ -51,25 +52,69 @@ def readjsonfromdir():
         print('finished reading from ' + path)
     print('finished reading data')
 
-def loadDataFromDB():
-    print('loading data')
+def dbconnect(targetcoll):
     client = MongoClient(connection_string)
     db = client[database]
-    collection = db[collections[0]]
+    collection = db[targetcoll]
+    return collection
 
-    test_subject = collection.find_one()
-    id = test_subject['id']
-    print('Id of the first element in the collection: ' + id)
+def getUniqueIDs(collection):
+    collection = dbconnect(collection)
+    res = list(collection.distinct("id"))
+    print(str(len(res)) + " unique IDs")
+    return res
 
-    x = collection.find({}, {
-        'id': id,
-        'batteryLevel': 1,
-        'lastStateChange': 1
-    })
+def getUniqueIDsWithPipeline(collection, query):
+    collection = dbconnect(collection)
+    res = list(collection.find(
+        {
+            "id": 1,
+            "licencePlate": "",
+        }
+    ).distinct("id"))
+    print(res)
+    #print(str(len(res)) + " unique IDs")
+    return res
+
+def plotAverageBatteryLevel(collection):
+    ids = getUniqueIDs(collection)
+    avglevels = []
+
+    print('Collecting data from every Scooter (this may take a while)')
+
+    i = 1
+    for id in ids[:5]:
+        print(i)
+        avglevels.append(
+            {
+                "id": id,
+                "avg": getAverageBatteryLevel(id)
+            }
+        )
+        i += 1
+
+    sorted(avglevels, key=lambda k: k['avg'])
+    print(type(avglevels[0]), avglevels[0])
+    avgbattlevel = sum(scooter['avg'] for scooter in avglevels) / len(avglevels)
+    print("Avarage batteryLevel of Scooter in Month'" + collection + "' is: " + "%.2f" % avgbattlevel + "%")
+
+
+    df = pd.DataFrame(avglevels)
+    df.sort_values(by=['avg'])
+    plt.bar(df['id'], df['avg'])
+    plt.title("Avarage batteryLevel of Scooter in Month'" + collection + "' is: " + "%.2f" % avgbattlevel + "%", fontsize=10)
+    plt.axhline(y=avgbattlevel, linewidth=1, color='k')
+    plt.ylabel('Avg Battery Level')
+    plt.xlabel('Scooter ID')
+    plt.xticks(rotation=90)
+    plt.show()
+
+def getAverageBatteryLevel(id):
+    collection = dbconnect(collections[0])
 
     avgpipe = [
         {"$match":
-            {"id": "ddbb29fd-bf4f-4cb5-b7a1-1a35489a1832"}
+            {"id": id}
         },
         {"$group": {
                 "_id": "$id",
@@ -81,81 +126,74 @@ def loadDataFromDB():
     avgres = collection.aggregate(pipeline=avgpipe)
 
     for each in avgres:
-        print("Avarage batteryLevel of Scooter '"+each['_id']+"' is: " + "%.2f" % each['batavg'] + "%")
+        #print("Avarage batteryLevel of Scooter '"+each['_id']+"' is: " + "%.2f" % each['batavg'] + "%")
+        return each['batavg']
 
-    latlngpipe = [
-        {"$match":
-             {"id": "ddbb29fd-bf4f-4cb5-b7a1-1a35489a1832"}
-         },
-        {"$group": {
-            "_id": "$id",
-            "lastLocationUpdate": "$lastLocationUpdate",
-            "lat": "$lat",
-            "lng": "$lng",
-            },
-        },
-    ]
+
+def plotAverageTraveldistance(id):
+    collection = dbconnect(collections[0])
+
     query = {
         'id': id,
-        "lastLocationUpdate": 1,
+        "lastStateChange": 1,
         "lat": 1,
         "lng": 1,
     }
-    clear = lambda: os.system('cls')
+
     posres = collection.find({}, query)
     print("posres: " + str(type(posres)))
     print(posres)
     distances = []
     positions = []
     cnt = 0
-    #posres = collection.aggregate(pipeline=latlngpipe)
+
     for point in posres:
         cnt += 1
         print("loading coordinates #" + str(cnt))
-        #print("Point '" + str(point['lat']) + ", " + str(point['lng']) + " on " + point['lastLocationUpdate'])
+
         positions.append(
             {
                 'lat': point['lat'],
                 'lng': point['lng'],
-                'lastLocationUpdate': point['lastLocationUpdate'],
+                'lastStateChange': point['lastStateChange'],
             }
         )
-        #coords_1 = (point['lat'], point['lng'])
-        #coords_2 = (point[i + 1]['lat'], point[i + 1]['lng'])
-        #distances.append(geopy.distance.vincenty(coords_1, coords_2).km)
-        #i = i + 1
-        #try:
 
-        #except:
-        #    print("EOL")
     print("finsished collecting data\nProccessing Data now!")
     i = 0
-    for point in positions:
+    for point in positions[:len(positions)/3]:
         coords_1 = (point['lat'], point['lng'])
         coords_2 = (positions[i + 1]['lat'], positions[i + 1]['lng'])
-        distances.append(geopy.distance.distance(coords_1, coords_2).km)
-    avgdist = sum(distances) / len(distances)
-    print("Avarage distancetravel with scooter " + id + ": "+ str(int(avgdist)) + "km")
+        date = datetime.fromisoformat(point['lastStateChange'][:-1])
+        distances.append({
+            "date": date.strftime('%d.%m.%Y'),
+            #"date": point['lastStateChange'],
+            "distance": geopy.distance.distance(coords_1, coords_2).km
+        })
+    print(len(distances))
+    print(distances)
+    avgdist = sum(scooter['distance'] for scooter in distances) / len(distances)
+    print("Avarage distancetravel with scooter " + id + ": " + "%.1f" % avgdist + "km")
 
-    # die ersten 10 ergebnisse ausgeben
-    #df = pandas.DataFrame(list(x[:25]))
-    #df.plot(kind="bar", x="lastStateChange", y="batteryLevel")
-    #plt.show()
-
-
-    avarageBatteryLevel = 0
-    #for data in x:
-    #    avarageBatteryLevel += int(x['batteryLevel'])
-
-
-    #avarageBatteryLevel = avarageBatteryLevel / list(x).
-    #print('Durchschnittliche Batterieladung des Scooters: ' + str(avarageBatteryLevel) + '%')
-
-    #engine = create_engine("mongodb:///?Server=MyServer&;Port=27017&Database=ScooterDaten&User=test&Password=Password")
-    #df = pandas.read_sql("SELECT borough, cuisine FROM restaurants WHERE Name = 'Morris Park Bake Shop'", engine)
-    #df.plot(kind="bar", x="borough", y="cuisine")
-    #plt.show()
+    df = pd.DataFrame(distances)
+    df['date'] = pd.to_datetime(df['date'])
+    df.sort_values(by=['date'], ascending=False)
+    #df['date'] = df['date'].dt.strftime('%d-%m-%Y')
+    plt.bar(df['date'], df['distance'])
+    plt.title("Avarage distancetravel with scooter " + id + ": " + "%.1f" % avgdist + "km", fontsize=10)
+    plt.axhline(y=avgdist, linewidth=1, color='red')
+    plt.ylabel('Avg distance traveled')
+    plt.xlabel('Dates')
+    plt.xticks(rotation=45)
+    plt.show()
 
 if __name__ == '__main__':
-    loadDataFromDB()
+    collection = dbconnect(collections[0])
+
+    test_subject = collection.find_one()
+    id = test_subject['id']
+
+    #plotAverageBatteryLevel(collections[0])
+    #input("Press Enter to continue...")
+    plotAverageTraveldistance(id)
     #readjsonfromdir()
