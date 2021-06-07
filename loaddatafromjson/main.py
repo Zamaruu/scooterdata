@@ -64,26 +64,15 @@ def getUniqueIDs(collection):
     print(str(len(res)) + " unique IDs")
     return res
 
-def getUniqueIDsWithPipeline(collection, query):
-    collection = dbconnect(collection)
-    res = list(collection.find(
-        {
-            "id": 1,
-            "licencePlate": "",
-        }
-    ).distinct("id"))
-    print(res)
-    #print(str(len(res)) + " unique IDs")
-    return res
-
 def plotAverageBatteryLevel(collection):
     ids = getUniqueIDs(collection)
+    #ids = getUniqueIDsWithPipeline(collection, {"id": 1, "licencePlate": 1})
     avglevels = []
 
     print('Collecting data from every Scooter (this may take a while)')
 
     i = 1
-    for id in ids[:5]:
+    for id in ids[:10]:
         print(i)
         avglevels.append(
             {
@@ -94,10 +83,8 @@ def plotAverageBatteryLevel(collection):
         i += 1
 
     sorted(avglevels, key=lambda k: k['avg'])
-    print(type(avglevels[0]), avglevels[0])
     avgbattlevel = sum(scooter['avg'] for scooter in avglevels) / len(avglevels)
-    print("Avarage batteryLevel of Scooter in Month'" + collection + "' is: " + "%.2f" % avgbattlevel + "%")
-
+    #print("Avarage batteryLevel of Scooter in Month'" + collection + "' is: " + "%.2f" % avgbattlevel + "%")
 
     df = pd.DataFrame(avglevels)
     df.sort_values(by=['avg'])
@@ -133,42 +120,27 @@ def plotAverageTraveldistance(id):
     collection = dbconnect(collections[0])
 
     query = {
-        'id': id,
+        'id': 1,
         "lastStateChange": 1,
         "lat": 1,
         "lng": 1,
     }
 
-    posres = collection.find({}, query)
-    print("posres: " + str(type(posres)))
-    print(posres)
+    posres = list(collection.find({'id': id}, query))
     distances = []
-    positions = []
-    cnt = 0
-
-    for point in posres[:200]:
-        cnt += 1
-        print("loading coordinates #" + str(cnt))
-
-        positions.append(
-            {
-                'lat': point['lat'],
-                'lng': point['lng'],
-                'lastStateChange': point['lastStateChange'],
-            }
-        )
 
     print("finsished collecting data\nProccessing Data now!")
     i = 0
-    for point in positions:
+    for point in posres:
         coords_1 = (point['lat'], point['lng'])
-        coords_2 = (positions[i + 1]['lat'], positions[i + 1]['lng'])
+        coords_2 = (posres[i + 1]['lat'], posres[i + 1]['lng'])
         date = datetime.fromisoformat(point['lastStateChange'][:-1])
-        distances.append({
-            #"date": date.strftime('%d.%m.%Y'),
-            "date": point['lastStateChange'],
-            "distance": geopy.distance.distance(coords_1, coords_2).km
-        })
+        distance = geopy.distance.distance(coords_1, coords_2).km
+        if distance < 100:
+            distances.append({
+                "date": point['lastStateChange'],
+                "distance": distance
+            })
     print(len(distances))
     #print(distances)
     avgdist = sum(scooter['distance'] for scooter in distances) / len(distances)
@@ -178,7 +150,7 @@ def plotAverageTraveldistance(id):
     df['date'] = pd.to_datetime(df['date'])
     df.sort_values(by=['date'], ascending=False)
     #df['date'] = df['date'].dt.strftime('%d-%m-%Y')
-    plt.bar(df['date'], df['distance'], width=0.05)
+    plt.bar(df['date'], df['distance'], width=0.25)
     plt.title("Avarage distancetravel with scooter " + id + ": " + "%.1f" % avgdist + "km", fontsize=10)
     plt.axhline(y=avgdist, linewidth=1, color='red')
     plt.ylabel('Avg distance traveled')
@@ -190,52 +162,37 @@ def plotScooterUsageMap(id):
     collection = dbconnect(collections[0])
 
     query = {
-        'id': id,
-        "lastStateChange": 1,
+        "lastLocationUpdate": 1,
         "lat": 1,
         "lng": 1,
     }
-    posres = collection.find({}, query)
+    posres = list(collection.find({'id': id}, query))
     print("posres: " + str(type(posres)))
     print(posres)
 
-    positions = []
-    cnt = 0
-    for point in posres[:10]:
-        cnt += 1
-        print("loading coordinates #" + str(cnt))
+    posres.sort(key=itemgetter('lastLocationUpdate'), reverse=False)
 
-        positions.append(
-            {
-                'lat': point['lat'],
-                'lng': point['lng'],
-                'date': point['lastStateChange'],
-            }
-        )
-
-    print(positions)
-    positions.sort(key=itemgetter('date'), reverse=False)
-
-    print(positions)
-    poslistlen = len(positions)
-    df = pd.DataFrame(positions)
+    print(posres)
+    poslistlen = len(posres)
+    df = pd.DataFrame(posres[:2000])
+    df.drop_duplicates(subset=['lat', 'lng'], keep='first')
 
     bbox = [8.7000, 8.8133, 51.7438, 51.6952]
 
-    os.chdir(r'C:\Users\mditz\Desktop\ScooterDaten\PBMap')
+    os.chdir(r'C:\Users\mditz\myWDK\loaddatafromjson')
     pb_map = plt.imread('map.png')
 
     fig, ax = plt.subplots(figsize = (10,7))
     ax.scatter(df['lng'], df['lat'],  zorder=1, c='r', s=10)
 
     cnt = 0
-    for position in positions:
+    for position in posres[:2000]:
         if cnt == 0:
             print("start")
         elif cnt == poslistlen-1:
             print("end")
         else:
-            ax.annotate(position['date'], xy=(position['lng'], position['lat']),
+            ax.annotate(position['lastLocationUpdate'], xy=(position['lng'], position['lat']),
                         xytext=(-20, 20),
                         textcoords='offset points', ha='center', va='bottom',
                         bbox=dict(boxstyle='round,pad=0.2', fc='yellow', alpha=0.3),
@@ -243,14 +200,14 @@ def plotScooterUsageMap(id):
                                         color='red'))
         cnt += 1
 
-    ax.annotate('Startpunkt am \n' + positions[0]['date'] , xy=(positions[0]['lng'], positions[0]['lat']), xytext=(20, 20),
+    ax.annotate('Startpunkt am \n' + posres[0]['lastLocationUpdate'] , xy=(posres[0]['lng'], posres[0]['lat']), xytext=(20, 20),
                 textcoords='offset points', ha='center', va='bottom',
-                bbox=dict(boxstyle='round,pad=0.2', fc='blue', alpha=0.3),
+                bbox=dict(boxstyle='round,pad=0.2', fc='green', alpha=0.3),
                 arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.5',
                                 color='red'))
-    ax.annotate('Endpunkt  am \n' + positions[poslistlen-1]['date'], xy=(positions[poslistlen-1]['lng'], positions[poslistlen-1]['lat']), xytext=(20, 20),
+    ax.annotate('Endpunkt  am \n' + posres[poslistlen-1]['lastLocationUpdate'], xy=(posres[poslistlen-1]['lng'], posres[poslistlen-1]['lat']), xytext=(20, 20),
                 textcoords='offset points', ha='center', va='bottom',
-                bbox=dict(boxstyle='round,pad=0.2', fc='blue', alpha=0.3),
+                bbox=dict(boxstyle='round,pad=0.2', fc='red', alpha=0.3),
                 arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.5',
                                 color='red'))
     ax.set_title('Plotting Spatial Scooter Data on Paderborn Map / SID: ' + id)
@@ -268,7 +225,6 @@ if __name__ == '__main__':
     id = test_subject['id']
 
     #plotAverageBatteryLevel(collections[0])
-    #input("Press Enter to continue...")
     plotAverageTraveldistance(id)
     plotScooterUsageMap(id)
     #readjsonfromdir()
